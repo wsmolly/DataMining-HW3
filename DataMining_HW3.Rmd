@@ -1,0 +1,224 @@
+---
+title: "DataMining_HW3"
+author: "Wen-Hsin Chang"
+date: "2021/3/15"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(message = FALSE)
+knitr::opts_chunk$set(warning = FALSE)
+```
+
+```{r, echo=FALSE, message = FALSE}
+library(ggplot2)
+library(tidyverse)
+library(mosaic)
+library(dbplyr)
+library (readr)
+library(modelr)
+library(mosaic)
+library (readr)
+library(rsample)  # for creating train/test splits
+library(caret)
+library(installr)
+library(foreach)
+```
+
+**Q1. What Causes what?**
+
+*1. Why can't we just get data and run the regression of "Crime" on "Police"?*
+We can't run the regression of Crime on Police because of the endogeneity problem. For instance, high-crime cities may have an inherently higher incentive to have more police, which causes a reverse causality. Moreover, there may be some unobservables such as the city's financial distress that is correlated with the number of police stations but also correlated with the city's crime rate, which is an omitted variable problem.
+
+*2. How were the researchers from UPenn able to isolate this effect? Briefly explain Table2*
+The researchers take advantage of High terrorism alert day, an incident that increases the deployment of police for reasons unrelated to the city's crime. The result in Table2 shows that high alert day is negatively and significantly related to the daily number of crimes.
+
+*3. Why did they control Metro ridership? What was that trying to capture?*
+The authors control Metro ridership because they want to make sure that the result is not driven by the fact that there are fewer pedestrians and therefore fewer victims on the street due to the high alert. In this case, the author can capture the pure effect of the increasing police on the crime rate, holding the number of potential victims fixed.
+
+*4. Can you describe the model in Table 4 column 1? What is the conclusion?*
+Table 4 column 1 shows that for firms in district 1, the negative effect of high alert day on the number of crimes is significantly larger relative to firms in other districts.\newpage
+
+
+**Q2.Predictive model building:green certification**
+
+```{r, echo=FALSE, message = FALSE}
+urlfile="https://raw.githubusercontent.com/jgscott/ECO395M/master/data/greenbuildings.csv"
+Greenbuilding<-read_csv(url(urlfile))
+```
+
+```{r, echo=FALSE, message = FALSE}
+Greenbuilding=Greenbuilding%>%mutate(revenue=(Rent*leasing_rate)/100)
+```
+
+To build a model that allows me to quantify the average change in rental income associated with green certification, I decide to apply the forward stepwise procedure.
+
+```{r, echo=FALSE, message = FALSE,results=FALSE}
+Greenbuilding=na.omit(Greenbuilding)
+null = lm(revenue ~1, data=Greenbuilding)
+fwd = step(null, scope=~(size+empl_gr+stories+age+renovated+class_a+class_b+LEED+Energystar+net+amenities+cd_total_07+hd_total07+total_dd_07+Precipitation+Gas_Costs+Electricity_Costs+City_Market_Rent), dir="forward")
+
+
+#sprintf("AIC of stepwise model: %f" ,AIC(fwd),-4)
+```
+
+The stepwise selection result shows that the regression of revenue on ( City_Market_Rent + size + class_a + class_b + amenities + hd_total07 + Electricity_Costs + Energystar + net + age + Gas_Costs + LEED + empl_gr) attains the lowest AIC value.
+
+
+```{r, echo=FALSE, message = FALSE}
+
+rmse_base <- vector()
+rmse_stepwise <- vector()
+for(x in 1:5){
+  
+  n = nrow(Greenbuilding)
+  # re-split into train and test cases
+  n_train = round(0.8*n)  # round to nearest integer
+  n_test = n - n_train
+  train_cases = sample.int(n, n_train, replace=FALSE)
+  test_cases = setdiff(1:n, train_cases)
+  
+ Greenbuilding_train = Greenbuilding[train_cases,]
+ Greenbuilding_test = Greenbuilding[test_cases,]
+ 
+ Greenbuilding_train=na.omit(Greenbuilding_train)
+ Greenbuilding_test=na.omit(Greenbuilding_test)
+  # fit to this training set
+  
+  
+lm_base = lm(revenue~City_Market_Rent + size+ age, data=Greenbuilding_train)
+
+rmse_base<- c( rmse_base,rmse(lm_base, Greenbuilding_test))
+
+
+  
+lm_stepwise = lm(revenue ~ City_Market_Rent + size + class_a + class_b + amenities + 
+    hd_total07 + Electricity_Costs + Energystar + net + age + 
+    Gas_Costs + LEED + empl_gr, data=Greenbuilding_train)
+
+rmse_stepwise<- c( rmse_stepwise,rmse(lm_stepwise, Greenbuilding_test))
+
+
+
+}
+
+sprintf("RMSE of base model: %f" ,median(rmse_base),-4)
+sprintf("RMSE of stepwise model: %f" ,median(rmse_stepwise),-4)
+```
+
+Compared with the RMS of baseline model, which include only the most intuitive figures such as market rent, size, rent, the stepwise model does a better job in the testing data set.
+
+
+*What's the average change in rental associated with green certification?*
+I think the most intuitive way is to use the regression coefficients according to my forward stepwise model. The above result shows that on average, LEED certification will increase the revenue per square foot by 2.95, whereas the Energystar certification will increase the revenues per square foot by 1.624.
+
+
+```{r, echo=FALSE, message = FALSE}
+lm(revenue ~ City_Market_Rent + size + class_a + class_b + amenities + 
+    hd_total07 + Electricity_Costs + Energystar + net + age + 
+    Gas_Costs + LEED + empl_gr, data=Greenbuilding_train)
+
+```
+
+\newpage
+
+**Q3:Predictive model building:California housing** 
+
+```{r, echo=FALSE, message = FALSE}
+urlfile="https://raw.githubusercontent.com/jgscott/ECO395M/master/data/CAhousing.csv"
+CAhousing<-read_csv(url(urlfile))
+library(maps)
+library(ggmap)
+library(rpart)
+library(rpart.plot)
+library(tree)
+```
+
+**plot A: Using color scale to show medianHouseValue versus longitude(x) and latitude(y)**
+
+```{r, echo=FALSE, message = FALSE}
+CAhousing=CAhousing%>%mutate(totalRooms_sd=totalRooms/households)
+ggplot(data=CAhousing) + 
+  geom_point(aes(x=longitude, y=latitude, color=medianHouseValue)) + 
+  scale_color_continuous(type = "viridis")
+```
+
+From the raw result (before adding the actual plot), we can tell that the median house value is higher when we move toward the lower left. In terms of geography, it should be the houses near the pacific ocean.
+
+```{r, echo=FALSE, message = FALSE}
+california_map=get_stamenmap(bbox=c(left=-123.5,bottom=32.5,right=-116.5,top=40),maptype="terrain")
+
+```
+
+```{r, echo=FALSE, message = FALSE}
+plotA_map=ggmap(california_map)+
+  geom_point(data=CAhousing,aes(x=longitude, y=latitude, color=medianHouseValue)) + 
+  scale_color_continuous(type = "viridis")
+```
+
+```{r}
+plotA_map=ggmap(california_map)+
+  geom_point(data=CAhousing,aes(x=longitude, y=latitude, color=medianHouseValue)) + 
+  scale_color_continuous(type = "viridis")
+plotA_map
+```
+
+After adding an actual map of California as background, we once again confirm that houses with higher values are the ones that are near the coast. The further from the coast, the lower the house price. 
+
+\newpage
+
+**plot B: model prediction of medianHouseValue versus longitude(x) and latitude(y)**\newline
+I use the tree model to predict the medianHouseValue. First of all, I fit the tree model and graph it to get a better sense of the data.
+
+```{r, echo=FALSE, message = FALSE}
+n = nrow(CAhousing)
+n_train = round(0.8*n)  # round to nearest integer
+n_test = n - n_train
+train_cases = sample.int(n, n_train, replace=FALSE)
+test_cases = setdiff(1:n, train_cases)
+housing_train = CAhousing[train_cases,]
+housing_test = CAhousing[test_cases,]
+
+```
+
+```{r, echo=FALSE, message = FALSE}
+## A regression tree
+library(rpart)
+# fit a big tree
+train_tree = rpart(medianHouseValue~longitude + latitude+housingMedianAge+population+households+totalRooms_sd+medianIncome, data=housing_train,
+                  control = rpart.control(cp = 0.002))
+rpart.plot(train_tree , digits=-3, type=4, extra=1)
+```
+
+
+```{r, echo=FALSE, message = FALSE}
+housing_test=housing_test%>%mutate(predicted_median_housevalue = predict(train_tree, housing_test))
+plotB_map=ggmap(california_map) + 
+  geom_point(data=housing_test,aes(x=longitude, y=latitude, color=predicted_median_housevalue)) + 
+  scale_color_continuous(type = "viridis")
+plotB_map
+```
+
+Consistent with our expectation, the tree model predicts that high house value is associated with the distance to the coast. However, the result above also shows that somewhere near LA and San Francisco would have higher house prices.
+
+\newpage
+**Plot c: model errors versus longitude(x) and latitude(y)**
+
+```{r, echo=FALSE, message = FALSE}
+housing_test=housing_test%>%mutate(predicted_errors = predicted_median_housevalue-medianHouseValue)
+
+plotc_map=ggmap(california_map)+
+  geom_point(data=housing_test,aes(x=longitude, y=latitude, color=predicted_errors)) + 
+  scale_color_continuous(type = "viridis")
+plotc_map
+```
+
+```{r, echo=FALSE, message = FALSE}
+sprintf("Out-of-sample error rate of my tree model: %f",abs(mean(housing_test$predicted_errors)/mean(housing_test$medianHouseValue)),-4)
+```
+
+
+Overall, the tree model that I choose is quite accurate given that the error rate is close to zero. Alternatively, the out-of-sample accuracy is around 0.9 in the out-of-sample forecast. However, for places near LA, there is some evidence suggesting that the prediction from the tree model tends to overprice.
+
+
